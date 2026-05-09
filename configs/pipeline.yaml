@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Day 43 Production Pipeline — Configuration
+# All sensitive values must be set as environment variables (see .env.example)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Spark ─────────────────────────────────────────────────────────────────────
+spark:
+  master:               "local[2]"
+  driver_memory:        "1g"
+  shuffle_partitions:   4
+  # JDBC driver jar — path inside the container / Codespace
+  jars:                 "/home/jovyan/work/jars/postgresql-42.7.3.jar"
+
+# ── Source: PostgreSQL (AdventureWorks) ───────────────────────────────────────
+source:
+  jdbc_url:   "${JDBC_URL}"          # e.g. jdbc:postgresql://adventureworks-postgres:5432/postgres
+  user:       "${DB_USER}"
+  password:   "${DB_PASSWORD}"
+  driver:     "org.postgresql.Driver"
+
+  # Tables to extract — schema.table notation used for JDBC push-down
+  dim_tables:
+    - schema: "Production"
+      table:  "Product"
+    - schema: "Production"
+      table:  "ProductCategory"
+    - schema: "Production"
+      table:  "ProductSubcategory"
+    - schema: "Person"
+      table:  "Person"
+    - schema: "HumanResources"
+      table:  "Department"
+    - schema: "HumanResources"
+      table:  "Employee"
+    - schema: "HumanResources"
+      table:  "EmployeeDepartmentHistory"
+    - schema: "HumanResources"
+      table:  "EmployeePayHistory"
+    - schema: "Sales"
+      table:  "Customer"
+    - schema: "Sales"
+      table:  "SalesTerritory"
+    - schema: "Purchasing"
+      table:  "Vendor"
+    - schema: "Purchasing"
+      table:  "ShipMethod"
+    - schema: "Purchasing"
+      table:  "PurchaseOrderHeader"
+    - schema: "Purchasing"
+      table:  "PurchaseOrderDetail"
+
+  fact_tables:
+    - schema:           "Sales"
+      table:            "SalesOrderHeader"
+      partition_column: "salesorderid"
+      lower_bound:      43659
+      upper_bound:      75123
+      num_partitions:   4
+      date_column:      "orderdate"   # used to derive order_year / order_month
+    - schema:           "Sales"
+      table:            "SalesOrderDetail"
+      partition_column: "salesorderdetailid"
+      lower_bound:      1
+      upper_bound:      121317
+      num_partitions:   4
+
+# ── HDFS (Data Lake — Raw Layer) ──────────────────────────────────────────────
+hdfs:
+  base:     "${HDFS_BASE}"           # e.g. hdfs://namenode:9000/datalake/raw
+  curated:  "${HDFS_CURATED}"        # e.g. hdfs://namenode:9000/datalake/curated
+
+# ── Hive (Data Warehouse) ─────────────────────────────────────────────────────
+hive:
+  metastore_uri:  "${HIVE_METASTORE_URI}"   # e.g. thrift://hive-metastore:9083
+  warehouse_dir:  "${HIVE_WAREHOUSE_DIR}"   # e.g. hdfs://namenode:9000/user/hive/warehouse
+  raw_database:   "adventureworks"
+  curated_database: "adventureworks_curated"
+
+# ── Local paths (used when running without HDFS — Codespace / local dev) ─────
+local:
+  raw_dir:      "data/raw"
+  curated_dir:  "data/curated"
+  sample_dir:   "data/sample"
+
+# ── Pipeline behaviour ────────────────────────────────────────────────────────
+pipeline:
+  write_mode:       "overwrite"
+  reference_date:   "2014-12-31"
+  min_revenue:      0
+  top_n_products:   5

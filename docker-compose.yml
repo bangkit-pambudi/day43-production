@@ -1,0 +1,214 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Day 43 — Batch Processing with PySpark
+# Stack: PostgreSQL (AdventureWorks) + Hadoop HDFS + Hive Metastore + Spark
+#
+# Usage:
+#   docker compose up -d
+#   docker compose exec spark bash          # shell into Spark container
+#   docker compose exec spark ./run_demo.sh # run full pipeline
+#
+# UIs:
+#   Spark UI         → http://localhost:4040
+#   HDFS NameNode    → http://localhost:9870
+#   Airflow          → http://localhost:8080  (user: admin / pass: admin)
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-spark-env: &spark-env
+  SPARK_MASTER: "local[2]"
+  SPARK_DRIVER_MEMORY: "1g"
+  SPARK_SQL_SHUFFLE_PARTITIONS: "4"
+  JDBC_URL: "jdbc:postgresql://adventureworks-postgres:5432/postgres"
+  DB_USER: "postgres"
+  DB_PASSWORD: "My_password1"
+  HDFS_BASE: "hdfs://namenode:9000/datalake/raw"
+  HDFS_CURATED: "hdfs://namenode:9000/datalake/curated"
+  HIVE_METASTORE_URI: "thrift://hive-metastore:9083"
+  HIVE_WAREHOUSE_DIR: "hdfs://namenode:9000/user/hive/warehouse"
+  PYSPARK_PYTHON: "python3"
+  PYTHONUNBUFFERED: "1"
+
+services:
+  # ============================================================
+  # PostgreSQL — AdventureWorks source database
+  # ============================================================
+  adventureworks-postgres:
+    image: chriseaton/adventureworks:postgres
+    container_name: adventureworks-postgres
+    environment:
+      POSTGRES_PASSWORD: My_password1
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d
+    networks:
+      - day43-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # Hadoop NameNode
+  # ============================================================
+  namenode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-namenode
+    hostname: namenode
+    user: root
+    command: >
+      bash -c "
+        mkdir -p /tmp/hadoop-hadoop/dfs/name &&
+        chown -R hadoop:hadoop /tmp/hadoop-hadoop &&
+        su -s /bin/bash hadoop -c 'hdfs namenode -format -force -nonInteractive' 2>/dev/null || true &&
+        su -s /bin/bash hadoop -c 'hdfs namenode'
+      "
+    environment:
+      ENSURE_NAMENODE_DIR: "/tmp/hadoop-hadoop/dfs/name"
+    env_file:
+      - ./hadoop.env
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    volumes:
+      - namenode_data:/tmp/hadoop-hadoop/dfs/name
+    networks:
+      - day43-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================================
+  # Hadoop DataNode
+  # ============================================================
+  datanode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-datanode
+    hostname: datanode
+    user: root
+    command: >
+      bash -c "
+        mkdir -p /tmp/hadoop-hadoop/dfs/data &&
+        chown -R hadoop:hadoop /tmp/hadoop-hadoop &&
+        su -s /bin/bash hadoop -c 'hdfs datanode'
+      "
+    env_file:
+      - ./hadoop.env
+    ports:
+      - "9864:9864"
+    volumes:
+      - datanode_data:/tmp/hadoop-hadoop/dfs/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+    networks:
+      - day43-net
+
+  # ============================================================
+  # Hive Metastore (pakai postgres adventureworks sebagai backend)
+  # ============================================================
+  hive-metastore:
+    image: apache/hive:3.1.3
+    container_name: hive-metastore
+    hostname: hive-metastore
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://adventureworks-postgres:5432/hive_metastore
+        -Djavax.jdo.option.ConnectionUserName=postgres
+        -Djavax.jdo.option.ConnectionPassword=My_password1
+    ports:
+      - "9083:9083"
+    depends_on:
+      adventureworks-postgres:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+    networks:
+      - day43-net
+    volumes:
+      - ./jars/postgresql-42.7.3.jar:/opt/hive/lib/postgresql-42.7.3.jar
+
+  # ============================================================
+  # Spark — container utama untuk run_demo.sh & jobs
+  # ============================================================
+  spark:
+    image: jupyter/pyspark-notebook:spark-3.5.0
+    container_name: day43-spark
+    hostname: spark
+    user: root
+    working_dir: /app
+    environment:
+      <<: *spark-env
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: "bigdata2024"
+    ports:
+      - "4040:4040"   # Spark UI
+      - "8888:8888"   # Jupyter
+    volumes:
+      - .:/app
+      - ./jars:/app/jars
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - day43-net
+    depends_on:
+      adventureworks-postgres:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      hive-metastore:
+        condition: service_started
+    command: >
+      bash -c "
+        pip install --quiet pyyaml python-dotenv pyarrow==15.0.2 &&
+        start-notebook.sh --NotebookApp.token='bigdata2024'
+      "
+
+  # ============================================================
+  # Airflow — DAG scheduler untuk batch pipeline
+  # UI: http://localhost:8080  (admin / admin)
+  # ============================================================
+  airflow:
+    image: apache/airflow:2.9.1-python3.11
+    container_name: day43-airflow
+    environment:
+      <<: *spark-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://postgres:My_password1@adventureworks-postgres:5432/airflow"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW_HOME: /opt/airflow
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - .:/app
+      - ./jars:/app/jars
+      - ./logs:/opt/airflow/logs
+    networks:
+      - day43-net
+    depends_on:
+      adventureworks-postgres:
+        condition: service_healthy
+    command: >
+      bash -c "
+        pip install --quiet apache-airflow-providers-apache-spark pyyaml python-dotenv &&
+        airflow db migrate &&
+        airflow users create -u admin -p admin -r Admin -e admin@local -f Admin -l User 2>/dev/null || true &&
+        airflow webserver &
+        airflow scheduler
+      "
+
+networks:
+  day43-net:
+    driver: bridge
+
+volumes:
+  namenode_data:
+  datanode_data:

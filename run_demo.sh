@@ -88,12 +88,13 @@ run_spark() {
     local jar_arg=()
     [ -n "$JARS" ] && jar_arg=(--jars "$JARS")
 
-    spark-submit \
+    PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}" spark-submit \
         --master "${SPARK_MASTER:-local[2]}" \
         --driver-memory "${SPARK_DRIVER_MEMORY:-1g}" \
         --conf "spark.sql.shuffle.partitions=${SPARK_SQL_SHUFFLE_PARTITIONS:-4}" \
         --conf "spark.ui.showConsoleProgress=false" \
         --conf "spark.sql.adaptive.enabled=true" \
+        --conf "spark.driver.extraJavaOptions=-Dlog4j.rootCategory=WARN,console" \
         --conf "spark.driver.extraJavaOptions=-Dlog4j.rootCategory=WARN,console" \
         "${jar_arg[@]}" \
         "$job" "$@" \

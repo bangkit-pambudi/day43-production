@@ -1,0 +1,85 @@
+{
+  "name": "Day 43 — Batch Processing with PySpark",
+
+  // Base image: Python 3.11 + Java 11 (required by PySpark)
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+
+  // ── Features ──────────────────────────────────────────────────────────────
+  "features": {
+    // Java 11 — PySpark requires JVM
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "11",
+      "jdkDistro": "ms"
+    }
+  },
+
+  // ── Port forwards ─────────────────────────────────────────────────────────
+  "forwardPorts": [
+    4040,   // Spark UI
+    8080,   // Airflow webserver
+    8888    // Jupyter (optional fallback)
+  ],
+  "portsAttributes": {
+    "4040": { "label": "Spark UI",         "onAutoForward": "notify" },
+    "8080": { "label": "Airflow UI",       "onAutoForward": "openBrowser" },
+    "8888": { "label": "Jupyter Notebook", "onAutoForward": "notify" }
+  },
+
+  // ── Post-create: install deps and init Airflow ────────────────────────────
+  "postCreateCommand": "bash .devcontainer/post_create.sh",
+
+  // ── VS Code extensions ────────────────────────────────────────────────────
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "redhat.vscode-yaml",
+        "mechatroner.rainbow-csv",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspaces/day43-production/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "editor.formatOnSave": true,
+        "files.trimTrailingWhitespace": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.python"
+        }
+      }
+    }
+  },
+
+  // ── Container environment variables ──────────────────────────────────────
+  "containerEnv": {
+    // Keep Spark in local mode — no HDFS/YARN needed
+    "SPARK_MASTER":                   "local[2]",
+    "SPARK_DRIVER_MEMORY":            "1g",
+    // Reduce shuffle partitions — critical for small Codespace datasets
+    "SPARK_SQL_SHUFFLE_PARTITIONS":   "4",
+    // Airflow lightweight config
+    "AIRFLOW_HOME":                   "/tmp/airflow",
+    "AIRFLOW__CORE__EXECUTOR":        "LocalExecutor",
+    "AIRFLOW__CORE__LOAD_EXAMPLES":   "False",
+    "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": "sqlite:////tmp/airflow/airflow.db",
+    // Suppress noisy PySpark output in terminal
+    "PYSPARK_PYTHON":                 "python3",
+    "PYTHONUNBUFFERED":               "1"
+  },
+
+  // ── Resource hints (GitHub Codespaces) ───────────────────────────────────
+  // Request 4-core / 8 GB machine for comfortable PySpark + Airflow
+  // Students on free tier (2-core/4GB) can still run — just slower
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+
+  // ── Mounts ────────────────────────────────────────────────────────────────
+  "mounts": [
+    // Persist pip cache across rebuilds → faster re-installs
+    "source=day43-pip-cache,target=/root/.cache/pip,type=volume"
+  ]
+}
