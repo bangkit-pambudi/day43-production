@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Day 43 — STEP 2: Application Layer
+#
+# Jalankan SETELAH semua service di infra.yml healthy:
+#   docker compose -f docker-compose.apps.yml up -d
+#
+# UIs:
+#   Spark UI  → http://localhost:4040
+#   Jupyter   → http://localhost:8888  (token: bigdata2024)
+#   Airflow   → http://localhost:8080  (admin / admin)
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-spark-env: &spark-env
+  SPARK_MASTER: "local[2]"
+  SPARK_DRIVER_MEMORY: "1g"
+  SPARK_SQL_SHUFFLE_PARTITIONS: "4"
+  JDBC_URL: "jdbc:postgresql://adventureworks-postgres:5432/postgres"
+  DB_USER: "postgres"
+  DB_PASSWORD: "My_password1"
+  HDFS_BASE: "hdfs://namenode:9000/datalake/raw"
+  HDFS_CURATED: "hdfs://namenode:9000/datalake/curated"
+  HIVE_METASTORE_URI: "thrift://hive-metastore:9083"
+  HIVE_WAREHOUSE_DIR: "hdfs://namenode:9000/user/hive/warehouse"
+  PYSPARK_PYTHON: "python3"
+  PYTHONUNBUFFERED: "1"
+
+services:
+  # ============================================================
+  # Spark + Jupyter
+  # Hive Metastore diakses via network eksternal day43-net
+  # ============================================================
+  spark:
+    image: jupyter/pyspark-notebook:spark-3.5.0
+    container_name: day43-spark
+    hostname: spark
+    user: root
+    working_dir: /app
+    environment:
+      <<: *spark-env
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: "bigdata2024"
+    ports:
+      - "4040:4040"   # Spark UI
+      - "8888:8888"   # Jupyter
+    volumes:
+      - .:/app
+      - ./jars:/app/jars
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - day43-net
+    # Tidak ada depends_on karena infra sudah pasti healthy
+    # sebelum file ini dijalankan
+    command: >
+      bash -c "
+        pip install --quiet pyyaml python-dotenv pyarrow==15.0.2 &&
+        start-notebook.sh --NotebookApp.token='bigdata2024'
+      "
+
+  # ============================================================
+  # Airflow
+  # Database airflow sudah dibuat oleh initdb-extra di infra.yml
+  # sehingga db init tidak kena race condition
+  # ============================================================
+  airflow:
+    image: apache/airflow:2.9.1-python3.11
+    container_name: day43-airflow
+    environment:
+      <<: *spark-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://postgres:My_password1@adventureworks-postgres:5432/airflow"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW_HOME: /opt/airflow
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - .:/app
+      - ./jars:/app/jars
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - day43-net
+    command: >
+      bash -c "
+        pip install --quiet apache-airflow-providers-apache-spark pyyaml python-dotenv &&
+        airflow db init &&
+        airflow users create -u admin -p admin -r Admin -e admin@local -f Admin -l User 2>/dev/null || true &&
+        airflow webserver &
+        airflow scheduler
+      "
+
+networks:
+  day43-net:
+    external: true   # pakai network yang sudah dibuat oleh infra.yml
+
+volumes:
+  airflow_logs:

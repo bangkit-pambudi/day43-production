@@ -1,0 +1,154 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Day 43 — STEP 1: Infrastructure Layer
+#
+# PRE-REQUISITES (jalankan sekali):
+#   mkdir -p pg-conf hive
+#   cat > pg-conf/pg_hba.conf << 'HBA'
+#   local   all  all                trust
+#   host    all  all  127.0.0.1/32  md5
+#   host    all  all  ::1/128       md5
+#   host    all  all  0.0.0.0/0     md5
+#   HBA
+#
+#   curl -L -o hive/postgresql-42.7.3.jar \
+#     "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/postgresql-42.7.3.jar"
+#   cp hive/postgresql-42.7.3.jar jars/postgresql-42.7.3.jar
+#
+#   docker compose -f docker-compose.infra.yml build hive-metastore
+#   docker compose -f docker-compose.infra.yml up -d adventureworks-postgres namenode
+#   # Tunggu postgres healthy, lalu init schema Hive:
+#   docker exec adventureworks-postgres psql -U postgres -c \
+#     "SET password_encryption='md5'; ALTER USER postgres WITH PASSWORD 'My_password1';"
+#   docker exec adventureworks-postgres psql -U postgres -c \
+#     "SELECT 1 FROM pg_database WHERE datname='hive_metastore'" | grep -q 1 || \
+#     docker exec adventureworks-postgres psql -U postgres -c \
+#     "CREATE DATABASE hive_metastore OWNER postgres"
+#   docker run --rm --network day43-net day43-hive-metastore:local \
+#     /opt/hive/bin/schematool -dbType postgres -initSchema \
+#     -url "jdbc:postgresql://adventureworks-postgres:5432/hive_metastore" \
+#     -driver org.postgresql.Driver -userName postgres -passWord My_password1
+#   docker compose -f docker-compose.infra.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  adventureworks-postgres:
+    image: chriseaton/adventureworks:postgres
+    container_name: adventureworks-postgres
+    environment:
+      POSTGRES_PASSWORD: My_password1
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth-local=trust"
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./pg-conf/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: postgres -c hba_file=/etc/postgresql/pg_hba.conf
+    networks:
+      - day43-net
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          pg_isready -U postgres &&
+          psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='hive_metastore'"
+          | grep -q 1
+          || psql -U postgres -c "CREATE DATABASE hive_metastore OWNER postgres"
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  namenode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-namenode
+    hostname: namenode
+    user: root
+    command: >
+      bash -c "
+        mkdir -p /tmp/hadoop-hadoop/dfs/name &&
+        chown -R hadoop:hadoop /tmp/hadoop-hadoop &&
+        su -s /bin/bash hadoop -c 'hdfs namenode -format -force -nonInteractive' 2>/dev/null || true &&
+        su -s /bin/bash hadoop -c 'hdfs namenode'
+      "
+    environment:
+      ENSURE_NAMENODE_DIR: "/tmp/hadoop-hadoop/dfs/name"
+    env_file:
+      - ./hadoop.env
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    volumes:
+      - namenode_data:/tmp/hadoop-hadoop/dfs/name
+    networks:
+      - day43-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  datanode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-datanode
+    hostname: datanode
+    user: root
+    command: >
+      bash -c "
+        mkdir -p /tmp/hadoop-hadoop/dfs/data &&
+        chown -R hadoop:hadoop /tmp/hadoop-hadoop &&
+        su -s /bin/bash hadoop -c 'hdfs datanode'
+      "
+    env_file:
+      - ./hadoop.env
+    ports:
+      - "9864:9864"
+    volumes:
+      - datanode_data:/tmp/hadoop-hadoop/dfs/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+    networks:
+      - day43-net
+
+  hive-metastore:
+    build:
+      context: ./hive
+      dockerfile: Dockerfile
+    image: day43-hive-metastore:local
+    container_name: hive-metastore
+    hostname: hive-metastore
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      # IS_RESUME dihapus — biarkan entrypoint cek schema sendiri
+      # SKIP_SCHEMA_INIT=false agar schematool jalan otomatis jika schema belum ada
+      IS_RESUME: "true"
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://adventureworks-postgres:5432/hive_metastore
+        -Djavax.jdo.option.ConnectionUserName=postgres
+        -Djavax.jdo.option.ConnectionPassword=My_password1 -Dhive.metastore.schema.verification=false
+    ports:
+      - "9083:9083"
+    depends_on:
+      adventureworks-postgres:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+    networks:
+      - day43-net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083' 2>/dev/null"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 90s
+
+networks:
+  day43-net:
+    driver: bridge
+    name: day43-net
+
+volumes:
+  namenode_data:
+  datanode_data:
