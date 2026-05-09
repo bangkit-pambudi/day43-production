@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Day 43 — Batch Processing with PySpark
+# Pinned for reproducibility in GitHub Codespaces / local Python 3.11
+#
+# Install:
+#   pip install -r requirements.txt
+#
+# RAM budget (Codespace 4GB free tier):
+#   PySpark local[2]  ~800 MB driver
+#   Airflow scheduler ~300 MB
+#   Airflow webserver ~250 MB
+#   Python overhead   ~150 MB
+#   ────────────────────────
+#   Total             ~1.5 GB  (leaves 2.5 GB headroom for data)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core: PySpark ─────────────────────────────────────────────────────────────
+pyspark==3.5.1
+pyarrow==15.0.2          # Parquet read/write — must match PySpark's expectation
+
+# ── Config & environment ──────────────────────────────────────────────────────
+pyyaml==6.0.1
+python-dotenv==1.0.1
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-cov==5.0.0
+
+# ── Airflow (minimal — LocalExecutor + SQLite, no heavy extras) ───────────────
+# Constraint file pins transitive deps to a known-good set for Airflow 2.9
+apache-airflow==2.9.1
+apache-airflow-providers-apache-spark==4.9.0   # SparkSubmitOperator
+
+# ── Data utilities (optional — for local inspection only) ─────────────────────
+pandas==2.2.2            # used only in notebooks / ad-hoc; NOT in pipeline jobs
