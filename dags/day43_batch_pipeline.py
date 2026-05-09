@@ -39,7 +39,7 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.utils.dates import days_ago
 
-from dags.dag_utils import (
+from dag_utils import (
     make_spark_task,
     make_validation_task,
     make_notify_task,

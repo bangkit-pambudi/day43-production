@@ -25,10 +25,10 @@ except ImportError:
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
-ROOT_DIR  = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-JOBS_DIR  = os.path.join(ROOT_DIR, "jobs")
-CONFIG    = os.path.join(ROOT_DIR, "configs", "pipeline.yaml")
-JARS      = os.path.join(ROOT_DIR, "..", "Day-42", "jars", "postgresql-42.7.3.jar")
+# Point directly to the mounted /app directory inside the container
+JOBS_DIR  = "/app/jobs"
+CONFIG    = "/app/configs/pipeline.yaml" 
+JARS      = "/app/jars/postgresql-42.7.3.jar"
 
 SPARK_CONF = {
     "spark.sql.shuffle.partitions":     "4",
@@ -63,13 +63,18 @@ def make_spark_task(task_id: str, job_file: str,
             driver_memory=driver_memory,
             executor_memory=driver_memory,
             conf=SPARK_CONF,
+            env_vars={"PYTHONPATH": "/app"},  # Memastikan Python bisa baca module utils/
             execution_timeout=timedelta(minutes=timeout_minutes),
         )
 
     # Fallback: run as a plain Python subprocess
     def _run(**context):
+        # Tambahkan /app ke PYTHONPATH di environment subprocess
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"/app:{env.get('PYTHONPATH', '')}"
+        
         cmd = [sys.executable, application] + args
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.stdout:
             print(result.stdout)
         if result.returncode != 0:

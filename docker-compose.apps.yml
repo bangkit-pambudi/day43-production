@@ -25,10 +25,6 @@ x-spark-env: &spark-env
   PYTHONUNBUFFERED: "1"
 
 services:
-  # ============================================================
-  # Spark + Jupyter
-  # Hive Metastore diakses via network eksternal day43-net
-  # ============================================================
   spark:
     image: jupyter/pyspark-notebook:spark-3.5.0
     container_name: day43-spark
@@ -40,8 +36,8 @@ services:
       JUPYTER_ENABLE_LAB: "yes"
       JUPYTER_TOKEN: "bigdata2024"
     ports:
-      - "4040:4040"   # Spark UI
-      - "8888:8888"   # Jupyter
+      - "4040:4040"
+      - "8888:8888"
     volumes:
       - .:/app
       - ./jars:/app/jars
@@ -49,49 +45,43 @@ services:
       - ./logs:/app/logs
     networks:
       - day43-net
-    # Tidak ada depends_on karena infra sudah pasti healthy
-    # sebelum file ini dijalankan
     command: >
       bash -c "
         pip install --quiet pyyaml python-dotenv pyarrow==15.0.2 &&
         start-notebook.sh --NotebookApp.token='bigdata2024'
       "
 
-  # ============================================================
-  # Airflow
-  # Database airflow sudah dibuat oleh initdb-extra di infra.yml
-  # sehingga db init tidak kena race condition
-  # ============================================================
   airflow:
-    image: apache/airflow:2.9.1-python3.11
-    container_name: day43-airflow
-    environment:
-      <<: *spark-env
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://postgres:My_password1@adventureworks-postgres:5432/airflow"
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      AIRFLOW_HOME: /opt/airflow
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - .:/app
-      - ./jars:/app/jars
-      - airflow_logs:/opt/airflow/logs
-    networks:
-      - day43-net
-    command: >
-      bash -c "
-        pip install --quiet apache-airflow-providers-apache-spark pyyaml python-dotenv &&
-        airflow db init &&
-        airflow users create -u admin -p admin -r Admin -e admin@local -f Admin -l User 2>/dev/null || true &&
-        airflow webserver &
-        airflow scheduler
-      "
+        build: .
+        container_name: day43-airflow
+        environment:
+          <<: *spark-env
+          AIRFLOW__CORE__EXECUTOR: LocalExecutor
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://postgres:My_password1@adventureworks-postgres:5432/airflow"
+          AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+          AIRFLOW_HOME: /opt/airflow
+          PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+        ports:
+          - "8080:8080"
+        volumes:
+          - ./dags:/opt/airflow/dags
+          - .:/app
+          - ./jars:/app/jars
+          - airflow_logs:/opt/airflow/logs
+        networks:
+          - day43-net
+        command: >
+          bash -c "
+            airflow db migrate &&
+            airflow users create -u admin -p admin -r Admin -e admin@local -f Admin -l User 2>/dev/null || true &&
+            airflow connections add 'spark_local' --conn-type 'spark' --conn-host 'local[*]' 2>/dev/null || true &&
+            airflow webserver -D &&
+            airflow scheduler
+          "
 
 networks:
   day43-net:
-    external: true   # pakai network yang sudah dibuat oleh infra.yml
+    external: true
 
 volumes:
   airflow_logs:
