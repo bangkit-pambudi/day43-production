@@ -114,7 +114,7 @@ services:
     build:
       context: ./hive
       dockerfile: Dockerfile
-    image: day43-hive-metastore:local
+    image: day43-hive-metastore:latest
     container_name: hive-metastore
     hostname: hive-metastore
     environment:
