@@ -120,7 +120,7 @@ def enrich_sales_detail(dfs: dict):
             F.col("od.productid"),
             F.col("od.orderqty"),
             F.col("od.unitprice"),
-            F.col("od.linetotal"),
+            (F.col("od.orderqty") * F.col("od.unitprice")).alias("linetotal"),
             F.col("oh.territoryid"),
             F.col("oh.order_year"),
             F.col("oh.order_month"),

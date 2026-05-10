@@ -22,7 +22,8 @@ def get_spark(app_name: str, config: dict = None) -> SparkSession:
         .config("spark.sql.shuffle.partitions",     shuffle_parts)
         .config("spark.sql.adaptive.enabled",       "true")
         .config("spark.ui.showConsoleProgress",     "false")
-        .config("spark.sql.parquet.compression.codec", "snappy")
+        .config("spark.sql.parquet.compression.codec",      "snappy")
+        .config("spark.sql.parquet.enableVectorizedReader", "false")
     )
 
     if jars:
@@ -54,7 +55,8 @@ def get_spark_with_hive(app_name: str, config: dict = None) -> SparkSession:
         .config("spark.sql.shuffle.partitions",         shuffle_parts)
         .config("spark.sql.adaptive.enabled",           "true")
         .config("spark.ui.showConsoleProgress",         "false")
-        .config("spark.sql.parquet.compression.codec",  "snappy")
+        .config("spark.sql.parquet.compression.codec",      "snappy")
+        .config("spark.sql.parquet.enableVectorizedReader", "false")
         .config("hive.metastore.uris",                  metastore_uri)
         .config("spark.sql.warehouse.dir",              warehouse_dir)
         .enableHiveSupport()

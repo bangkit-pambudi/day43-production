@@ -122,7 +122,7 @@ services:
       DB_DRIVER: postgres
       # IS_RESUME dihapus — biarkan entrypoint cek schema sendiri
       # SKIP_SCHEMA_INIT=false agar schematool jalan otomatis jika schema belum ada
-      IS_RESUME: "true"
+      IS_RESUME: "false"
       SERVICE_OPTS: >-
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
         -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://adventureworks-postgres:5432/hive_metastore

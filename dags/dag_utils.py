@@ -31,9 +31,10 @@ CONFIG    = "/app/configs/pipeline.yaml"
 JARS      = "/app/jars/postgresql-42.7.3.jar"
 
 SPARK_CONF = {
-    "spark.sql.shuffle.partitions":     "4",
-    "spark.ui.showConsoleProgress":     "false",
-    "spark.sql.adaptive.enabled":       "true",
+    "spark.sql.shuffle.partitions":          "4",
+    "spark.ui.showConsoleProgress":          "false",
+    "spark.sql.adaptive.enabled":            "true",
+    "spark.sql.parquet.enableVectorizedReader": "false",
 }
 
 
@@ -98,13 +99,20 @@ def make_validation_task(task_id: str, tables: list, timeout_minutes: int = 5):
     tables: list of fully-qualified table names, e.g. 'adventureworks_curated.fact_hr_workforce'
     """
     def _validate(**context):
+        import os
         from pyspark.sql import SparkSession
+
+        metastore_uri = os.environ.get("HIVE_METASTORE_URI", "thrift://hive-metastore:9083")
+        warehouse_dir = os.environ.get("HIVE_WAREHOUSE_DIR", "hdfs://namenode:9000/user/hive/warehouse")
 
         spark = SparkSession.builder \
             .master("local[1]") \
             .appName(f"ValidateCurated-{task_id}") \
             .config("spark.sql.shuffle.partitions", "1") \
             .config("spark.ui.showConsoleProgress", "false") \
+            .config("spark.sql.parquet.enableVectorizedReader", "false") \
+            .config("hive.metastore.uris", metastore_uri) \
+            .config("spark.sql.warehouse.dir", warehouse_dir) \
             .enableHiveSupport() \
             .getOrCreate()
 
