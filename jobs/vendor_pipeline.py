@@ -101,19 +101,28 @@ def enrich(dfs: dict):
             F.col("h.orderdate"),
             F.col("h.shipdate"),
             F.col("h.duedate"),
+            F.col("h.subtotal"),
             F.col("sm.ship_method"),
         )
 
     # Join detail + product for price variance
+    # When standard_cost is NULL, use proxy: UnitPrice - (UnitPrice * 0.85)
     df_detail = dfs["po_detail"].alias("d") \
         .join(product_slim.alias("p"),
               F.col("d.productid") == F.col("p.productid"), "left") \
+        .withColumn("price_variance",
+            F.when(
+                F.col("p.standard_cost").isNotNull(),
+                F.col("d.unitprice") - F.col("p.standard_cost")
+            ).otherwise(
+                F.col("d.unitprice") - (F.col("d.unitprice") * 0.85)
+            )) \
         .select(
             F.col("d.purchaseorderid"),
             F.col("d.productid"),
             F.col("d.unitprice"),
             F.col("p.standard_cost"),
-            (F.col("d.unitprice") - F.col("p.standard_cost")).alias("price_variance"),
+            "price_variance",
         )
 
     df = df_header.alias("h") \
@@ -136,6 +145,7 @@ def enrich(dfs: dict):
             F.col("v.vendor_name"),
             F.col("v.credit_rating"),
             F.col("h.ship_method"),
+            F.col("h.subtotal"),
             F.col("is_on_time"),
             F.col("lead_time_days"),
             F.col("d.price_variance"),
@@ -148,42 +158,73 @@ def enrich(dfs: dict):
 def aggregate_vendor_performance(df_enriched):
     """
     Grain: (vendor_id, vendor_name, credit_rating, ship_method)
-    Computes on_time_rate, avg_lead_time, avg_price_variance, and VendorScore.
+    Computes on_time_rate, avg_price_variance, and VendorScore.
+    
+    Uses count(distinct purchaseorderid) to count unique POs, not line items.
     """
     logger.info("Aggregating vendor performance")
 
     df_agg = df_enriched.groupBy(
         "vendorid", "vendor_name", "credit_rating", "ship_method"
     ).agg(
-        F.count("purchaseorderid").alias("total_orders"),
-        F.sum("is_on_time").alias("on_time_orders"),
-        F.round(F.avg(
-            F.when(F.col("lead_time_days").isNotNull(), F.col("lead_time_days"))
-        ), 1).alias("avg_lead_time_days"),
+        F.countDistinct("purchaseorderid").alias("total_orders"),
+        F.sum(F.when(F.col("is_on_time") == 1, F.col("purchaseorderid")))
+            .cast("long").alias("_dummy"),  # placeholder
+        F.round(F.sum("subtotal"), 2).alias("total_spend"),
         F.round(F.avg("price_variance"), 2).alias("avg_price_variance"),
-    ).withColumn("on_time_rate",
-        F.round(F.col("on_time_orders") / F.col("total_orders") * 100, 2)
-    ).withColumn("vendor_score",
-        F.round(
-            (F.col("on_time_rate") * 0.6) +
-            ((100 - F.abs(F.col("avg_price_variance"))) * 0.4),
-        2)
-    ).withColumnRenamed("vendorid", "vendor_id")
+    )
+    
+    # Calculate on_time_orders using window to get count of on-time POs per vendor
+    # We need to count distinct POs where is_on_time == 1
+    on_time_po = df_enriched.filter(F.col("is_on_time") == 1) \
+        .groupBy("vendorid", "vendor_name", "credit_rating", "ship_method") \
+        .agg(F.countDistinct("purchaseorderid").alias("on_time_orders"))
+    
+    df_agg = df_agg.join(
+        on_time_po,
+        ["vendorid", "vendor_name", "credit_rating", "ship_method"],
+        "left"
+    ).fillna(0, subset=["on_time_orders"]) \
+    .drop("_dummy")
+    
+    # Calculate on_time_rate and vendor_score with edge case handling
+    df_agg = df_agg \
+        .withColumn("on_time_rate",
+            F.when(
+                F.col("total_orders") > 0,
+                F.round(F.col("on_time_orders") / F.col("total_orders") * 100, 2)
+            ).otherwise(F.lit(0.0))) \
+        .withColumn("vendor_score",
+            F.greatest(
+                F.lit(0.0),
+                F.round(
+                    (F.col("on_time_rate") * 0.6) +
+                    ((100 - F.abs(F.col("avg_price_variance"))) * 0.4),
+                2)
+            )) \
+        .withColumnRenamed("vendorid", "vendor_id")
 
     logger.info("Vendor summary rows: %d", df_agg.count())
     return df_agg
 
 
 def build_overall_ranking(df_perf):
-    """Overall vendor ranking aggregated across ship methods."""
-    win_overall = Window.orderBy(F.desc("avg_vendor_score"))
-    return df_perf.groupBy("vendor_id", "vendor_name", "credit_rating") \
+    """
+    Overall vendor ranking aggregated across ship methods.
+    Produces one row per vendor with overall_score and overall_rank.
+    """
+    # First aggregate to vendor level (across all ship methods)
+    df_overall = df_perf.groupBy("vendor_id", "vendor_name", "credit_rating") \
         .agg(
-            F.round(F.avg("vendor_score"), 2).alias("avg_vendor_score"),
-            F.round(F.avg("on_time_rate"), 2).alias("avg_on_time_rate"),
-            F.sum("total_orders").alias("total_orders"),
-        ) \
-        .withColumn("overall_rank", F.rank().over(win_overall))
+            F.round(F.avg("vendor_score"), 2).alias("overall_score"),
+        )
+    
+    # Then apply ranking window (must be defined AFTER groupBy/agg)
+    win_overall = Window.orderBy(F.desc("overall_score"))
+    df_overall = df_overall.withColumn("overall_rank", F.rank().over(win_overall))
+    
+    logger.info("Overall ranking complete | rows=%d", df_overall.count())
+    return df_overall
 
 
 def rank_within_ship_method(df_perf):
@@ -200,7 +241,19 @@ def transform(dfs: dict) -> dict:
     df_ranked        = rank_within_ship_method(df_perf)
     df_overall       = build_overall_ranking(df_perf)
 
-    df_final = df_ranked.withColumn("load_timestamp", F.current_timestamp())
+    # Select only required columns for fact_vendor_performance
+    df_final = df_ranked.select(
+        F.col("vendor_id"),
+        F.col("vendor_name"),
+        F.col("credit_rating"),
+        F.col("ship_method"),
+        F.col("total_orders").cast("long"),
+        F.col("on_time_orders").cast("long"),
+        F.col("on_time_rate"),
+        F.col("total_spend"),
+        F.col("avg_price_variance"),
+        F.col("vendor_score"),
+    ).withColumn("load_timestamp", F.current_timestamp())
 
     # Verify ship method filter held
     methods = [r[0] for r in df_final.select("ship_method").distinct().collect()]
@@ -208,7 +261,7 @@ def transform(dfs: dict) -> dict:
     assert all(m in VALID_SHIP_METHODS for m in methods), \
         f"Invalid ship method: {set(methods) - set(VALID_SHIP_METHODS)}"
 
-    logger.info("Transform complete | perf_rows=%d | overall_rows=%d",
+    logger.info("Transform complete | fact_vendor_performance rows=%d | vendor_overall_ranking rows=%d",
                 df_final.count(), df_overall.count())
     return {
         "fact_vendor_performance": df_final,
@@ -233,7 +286,11 @@ def load(results: dict, config: dict):
         results["vendor_overall_ranking"], db, "vendor_overall_ranking", mode=mode
     )
 
-    logger.info("Vendor tables written to Hive")
+    # Log final summary
+    perf_count = results["fact_vendor_performance"].count()
+    vendor_count = results["vendor_overall_ranking"].count()
+    logger.info("Vendor pipeline complete | vendors=%d | fact_vendor_performance rows=%d",
+                vendor_count, perf_count)
 
 
 # ─── ANALYTICS ────────────────────────────────────────────────────────────────

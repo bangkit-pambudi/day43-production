@@ -1,0 +1,37 @@
+WARNING: package sun.security.action not in java.base
+26/05/19 02:09:17 WARN Utils: Your hostname, codespaces-85387c resolves to a loopback address: 127.0.0.1; using 10.0.0.104 instead (on interface eth0)
+26/05/19 02:09:17 WARN Utils: Set SPARK_LOCAL_IP if you need to bind to another address
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::loadLibrary has been called by org.apache.hadoop.util.NativeCodeLoader in an unnamed module (file:/workspaces/day43-production/.venv/lib/python3.12/site-packages/pyspark/jars/hadoop-client-api-3.3.4.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+26/05/19 02:09:17 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+Exception in thread "main" java.lang.UnsupportedOperationException: getSubject is not supported
+	at java.base/javax.security.auth.Subject.getSubject(Subject.java:277)
+	at org.apache.hadoop.security.UserGroupInformation.getCurrentUser(UserGroupInformation.java:577)
+	at org.apache.hadoop.fs.FileSystem$Cache$Key.<init>(FileSystem.java:3746)
+	at org.apache.hadoop.fs.FileSystem$Cache$Key.<init>(FileSystem.java:3736)
+	at org.apache.hadoop.fs.FileSystem$Cache.get(FileSystem.java:3520)
+	at org.apache.hadoop.fs.FileSystem.get(FileSystem.java:540)
+	at org.apache.spark.util.DependencyUtils$.resolveGlobPath(DependencyUtils.scala:317)
+	at org.apache.spark.util.DependencyUtils$.$anonfun$resolveGlobPaths$2(DependencyUtils.scala:273)
+	at org.apache.spark.util.DependencyUtils$.$anonfun$resolveGlobPaths$2$adapted(DependencyUtils.scala:271)
+	at scala.collection.TraversableLike.$anonfun$flatMap$1(TraversableLike.scala:293)
+	at scala.collection.IndexedSeqOptimized.foreach(IndexedSeqOptimized.scala:36)
+	at scala.collection.IndexedSeqOptimized.foreach$(IndexedSeqOptimized.scala:33)
+	at scala.collection.mutable.WrappedArray.foreach(WrappedArray.scala:38)
+	at scala.collection.TraversableLike.flatMap(TraversableLike.scala:293)
+	at scala.collection.TraversableLike.flatMap$(TraversableLike.scala:290)
+	at scala.collection.AbstractTraversable.flatMap(Traversable.scala:108)
+	at org.apache.spark.util.DependencyUtils$.resolveGlobPaths(DependencyUtils.scala:271)
+	at org.apache.spark.deploy.SparkSubmit.$anonfun$prepareSubmitEnvironment$4(SparkSubmit.scala:392)
+	at scala.Option.map(Option.scala:230)
+	at org.apache.spark.deploy.SparkSubmit.prepareSubmitEnvironment(SparkSubmit.scala:392)
+	at org.apache.spark.deploy.SparkSubmit.org$apache$spark$deploy$SparkSubmit$$runMain(SparkSubmit.scala:964)
+	at org.apache.spark.deploy.SparkSubmit.doRunMain$1(SparkSubmit.scala:194)
+	at org.apache.spark.deploy.SparkSubmit.submit(SparkSubmit.scala:217)
+	at org.apache.spark.deploy.SparkSubmit.doSubmit(SparkSubmit.scala:91)
+	at org.apache.spark.deploy.SparkSubmit$$anon$2.doSubmit(SparkSubmit.scala:1120)
+	at org.apache.spark.deploy.SparkSubmit$.main(SparkSubmit.scala:1129)
+	at org.apache.spark.deploy.SparkSubmit.main(SparkSubmit.scala)
