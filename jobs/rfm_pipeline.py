@@ -297,6 +297,11 @@ def main():
         load(results, config)
         if args.analytics:
             run_analytics(spark, config)
+
+        print("\n===== RFM SEGMENT DISTRIBUTION =====")
+        spark.table("adventureworks_curated.fact_customer_rfm") \
+             .groupBy("rfm_segment").count().orderBy("count", ascending=False).show()
+
         logger.info("Pipeline complete")
     except SystemExit:
         raise
