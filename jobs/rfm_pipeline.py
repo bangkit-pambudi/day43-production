@@ -194,7 +194,7 @@ def transform(dfs: dict, config: dict) -> dict:
     df_enriched  = enrich_with_customer_info(df_segmented, dfs)
 
     df_final = df_enriched.withColumn("load_timestamp", F.current_timestamp()) \
-                          .withColumn("segment_data", F.current_date())
+                          .withColumn("segment_date", F.current_date())
 
     logger.info("Transform complete | rows=%d", df_final.count())
     return {"fact_customer_rfm": df_final}
@@ -223,10 +223,10 @@ def run_analytics(spark: SparkSession, config: dict):
     spark.sql(f"""
         SELECT customer_name, territory_name,
                recency_days, frequency, monetary, rfm_score,
-               rfm_segments, segment_date,
+               rfm_segment, segment_date,
                round(monetary_percentile, 2) monetary_pct
         FROM {db}.fact_customer_rfm
-        WHERE rfm_segment LIKE 'Champion'
+        WHERE rfm_segment LIKE '%Champion%'
         ORDER BY monetary DESC
         LIMIT 20
     """).show(truncate=False)
@@ -235,9 +235,9 @@ def run_analytics(spark: SparkSession, config: dict):
     logger.info("BQ2: Segment distribution & revenue share")
     spark.sql(f"""
         SELECT rfm_segment,
-               COUNT(customer_id)                        AS customer_count,
-               ROUND(COUNT(customer_id) /
-                   SUM(COUNT(customer_id)) OVER() * 100, 1) AS pct_customers,
+               COUNT(customerid)                         AS customer_count,
+               ROUND(COUNT(customerid) /
+                   SUM(COUNT(customerid)) OVER() * 100, 1) AS pct_customers,
                ROUND(SUM(monetary), 2)                   AS total_revenue,
                ROUND(SUM(monetary) /
                    SUM(SUM(monetary)) OVER() * 100, 1)   AS pct_revenue
@@ -250,7 +250,7 @@ def run_analytics(spark: SparkSession, config: dict):
     logger.info("BQ3: At Risk & Lost customers per territory")
     spark.sql(f"""
         SELECT territory_name, rfm_segment,
-               COUNT(customer_id)             AS customer_count,
+               COUNT(customerid)              AS customer_count,
                ROUND(AVG(monetary), 2)        AS avg_monetary,
                ROUND(AVG(recency_days), 0)    AS avg_recency_days
         FROM {db}.fact_customer_rfm
@@ -263,7 +263,7 @@ def run_analytics(spark: SparkSession, config: dict):
     logger.info("BQ4: Average RFM metrics per segment")
     spark.sql(f"""
         SELECT rfm_segment,
-               COUNT(customer_id)              AS customers,
+               COUNT(customerid)              AS customers,
                ROUND(AVG(recency_days), 1)     AS avg_recency,
                ROUND(AVG(frequency), 1)        AS avg_frequency,
                ROUND(AVG(monetary), 2)         AS avg_monetary
@@ -286,7 +286,7 @@ def main():
     if args.referance_date:
         if "pipeline" not in config:
             config["pipeline"] = {}
-        config["pipeline"]["reference_date"] = arg.reference_date
+        config["pipeline"]["referance_date"] = args.referance_date
 
     spark  = get_spark_with_hive("RFMPipeline", config.get("spark", {}))
     logger.info("Pipeline started | config=%s", args.config)
