@@ -253,8 +253,8 @@ class TestRFMPipelineFunctions:
 
         result = assign_segments(df)
         rows = {r["customerid"]: r["rfm_segment"] for r in result.collect()}
-        assert rows[1] == "Champion"
-        assert rows[2] == "Champion"
+        assert rows[1] == "Bronze Champion"
+        assert rows[2] == "Gold Champion"
         assert rows[3] == "Lost"
 
     def test_segment_new_customer(self, spark):

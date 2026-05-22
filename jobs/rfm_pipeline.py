@@ -82,6 +82,9 @@ def compute_rfm_raw(df_orders, reference_date: str):
         F.max("orderdate").alias("last_order_date"),
     )
 
+    monetary_perc = Window.orderBy("monetary")
+    df = df.withColumn("monetary_percentile", F.percent_rank().over(monetary_perc))
+
     logger.info("RFM raw | customers=%d", df.count())
     return df
 
@@ -94,7 +97,7 @@ def score_rfm(df_rfm):
     logger.info("Scoring RFM with ntile(4)")
 
     # Window specs — no partition; global quartile across all customers
-    win_r = Window.orderBy(F.desc("recency_days"))  # desc → ntile 1 = smallest recency
+    win_r = Window.orderBy(F.asc("recency_days"))  # desc → ntile 1 = smallest recency
     win_f = Window.orderBy(F.asc("frequency"))
     win_m = Window.orderBy(F.asc("monetary"))
 
@@ -125,13 +128,17 @@ def assign_segments(df_scored):
     r = F.col("r_score")
     f = F.col("f_score")
     m = F.col("m_score")
+    rfm = F.col("rfm_score")
 
     df = df_scored.withColumn(
         "rfm_segment",
-        F.when((r >= 3) & (f >= 3) & (m >= 3),             "Champion")
+        F.when((r >= 3) & (f >= 3) & (m >= 3),
+                F.when(rfm == "444", "Gold Champion")
+                 .when(rfm.startswith("4"), "Silver Champion")
+                 .otherwise("Bronze Champion"))
+         .when((r <= 2) & (f >= 3) & (m >= 3),               "At Risk")
          .when((f >= 3) & (m >= 3),                          "Loyal")
          .when((r >= 3) & (f >= 2),                          "Potential Loyal")
-         .when((r <= 2) & (f >= 3) & (m >= 3),              "At Risk")
          .when((r == 1) & (f <= 2),                          "Lost")
          .when((r == 4) & (f == 1),                          "New Customer")
          .otherwise("Others")
@@ -186,7 +193,8 @@ def transform(dfs: dict, config: dict) -> dict:
     df_segmented = assign_segments(df_scored)
     df_enriched  = enrich_with_customer_info(df_segmented, dfs)
 
-    df_final = df_enriched.withColumn("load_timestamp", F.current_timestamp())
+    df_final = df_enriched.withColumn("load_timestamp", F.current_timestamp()) \
+                          .withColumn("segment_date", F.current_date())
 
     logger.info("Transform complete | rows=%d", df_final.count())
     return {"fact_customer_rfm": df_final}
@@ -214,9 +222,11 @@ def run_analytics(spark: SparkSession, config: dict):
     logger.info("BQ1: Top 20 Champion customers by monetary")
     spark.sql(f"""
         SELECT customer_name, territory_name,
-               recency_days, frequency, monetary, rfm_score
+               recency_days, frequency, monetary, rfm_score,
+               rfm_segment, segment_date,
+               round(monetary_percentile, 2) monetary_pct
         FROM {db}.fact_customer_rfm
-        WHERE rfm_segment = 'Champion'
+        WHERE rfm_segment LIKE '%Champion%'
         ORDER BY monetary DESC
         LIMIT 20
     """).show(truncate=False)
@@ -225,9 +235,9 @@ def run_analytics(spark: SparkSession, config: dict):
     logger.info("BQ2: Segment distribution & revenue share")
     spark.sql(f"""
         SELECT rfm_segment,
-               COUNT(customer_id)                        AS customer_count,
-               ROUND(COUNT(customer_id) /
-                   SUM(COUNT(customer_id)) OVER() * 100, 1) AS pct_customers,
+               COUNT(customerid)                         AS customer_count,
+               ROUND(COUNT(customerid) /
+                   SUM(COUNT(customerid)) OVER() * 100, 1) AS pct_customers,
                ROUND(SUM(monetary), 2)                   AS total_revenue,
                ROUND(SUM(monetary) /
                    SUM(SUM(monetary)) OVER() * 100, 1)   AS pct_revenue
@@ -240,7 +250,7 @@ def run_analytics(spark: SparkSession, config: dict):
     logger.info("BQ3: At Risk & Lost customers per territory")
     spark.sql(f"""
         SELECT territory_name, rfm_segment,
-               COUNT(customer_id)             AS customer_count,
+               COUNT(customerid)              AS customer_count,
                ROUND(AVG(monetary), 2)        AS avg_monetary,
                ROUND(AVG(recency_days), 0)    AS avg_recency_days
         FROM {db}.fact_customer_rfm
@@ -253,7 +263,7 @@ def run_analytics(spark: SparkSession, config: dict):
     logger.info("BQ4: Average RFM metrics per segment")
     spark.sql(f"""
         SELECT rfm_segment,
-               COUNT(customer_id)              AS customers,
+               COUNT(customerid)              AS customers,
                ROUND(AVG(recency_days), 1)     AS avg_recency,
                ROUND(AVG(frequency), 1)        AS avg_frequency,
                ROUND(AVG(monetary), 2)         AS avg_monetary
@@ -269,9 +279,15 @@ def main():
     parser = argparse.ArgumentParser(description="Customer RFM Pipeline")
     parser.add_argument("--config",    required=True)
     parser.add_argument("--analytics", action="store_true")
+    parser.add_argument("--referance-date", type=str, help="Override reference date (YYYY-MM-DD)")
     args = parser.parse_args()
 
     config = load_config(args.config)
+    if args.referance_date:
+        if "pipeline" not in config:
+            config["pipeline"] = {}
+        config["pipeline"]["referance_date"] = args.referance_date
+
     spark  = get_spark_with_hive("RFMPipeline", config.get("spark", {}))
     logger.info("Pipeline started | config=%s", args.config)
 
@@ -281,6 +297,11 @@ def main():
         load(results, config)
         if args.analytics:
             run_analytics(spark, config)
+
+        print("\n===== RFM SEGMENT DISTRIBUTION =====")
+        spark.table("adventureworks_curated.fact_customer_rfm") \
+             .groupBy("rfm_segment").count().orderBy("count", ascending=False).show()
+
         logger.info("Pipeline complete")
     except SystemExit:
         raise

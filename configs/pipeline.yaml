@@ -9,7 +9,7 @@ spark:
   driver_memory:        "1g"
   shuffle_partitions:   4
   # JDBC driver jar — path inside the container / Codespace
-  jars:                 "/home/jovyan/work/jars/postgresql-42.7.3.jar"
+  jars:                 "/app/jars/postgresql-42.7.3.jar"
 
 # ── Source: PostgreSQL (AdventureWorks) ───────────────────────────────────────
 source:
@@ -85,6 +85,6 @@ local:
 # ── Pipeline behaviour ────────────────────────────────────────────────────────
 pipeline:
   write_mode:       "overwrite"
-  reference_date:   "2014-12-31"
+  reference_date:   "2014-07-31"
   min_revenue:      0
   top_n_products:   5

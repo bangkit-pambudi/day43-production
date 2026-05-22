@@ -64,14 +64,14 @@ CURATED_TABLES = [
     "adventureworks_curated.fact_sales_performance",
     "adventureworks_curated.monthly_sales_summary",
     "adventureworks_curated.territory_yoy",
-    "adventureworks_curated.top_products"
+    "adventureworks_curated.top_products",
+    "adventureworks_curated.fact_customer_rfm"
     # # HR pipeline
     # "adventureworks_curated.fact_hr_workforce",
     # # Vendor pipeline
     # "adventureworks_curated.fact_vendor_performance",
     # "adventureworks_curated.vendor_overall_ranking",
     # # RFM pipeline
-    # "adventureworks_curated.fact_customer_rfm",
 ]
 
 # ─── DAG ──────────────────────────────────────────────────────────────────────
@@ -126,6 +126,15 @@ with DAG(
         timeout_minutes=20,
     )
 
+    # ── 4a. Transform: Customer RFM ─────────────────────────────────────
+    transform_rfm = make_spark_task(
+        task_id="transform_rfm",
+        job_file="rfm_pipeline.py",
+        driver_memory="1g",
+        timeout_minutes=20,
+    )
+
+
     # ── 5. Validate: all 8 curated tables must be non-empty ───────────────────
     validate_curated = make_validation_task(
         task_id="validate_curated",
@@ -155,7 +164,7 @@ with DAG(
     #       ↓
     #  notify_complete
 
-    transform_tasks = [transform_sales]
+    transform_tasks = [transform_sales, transform_rfm]
 
     (
         extract_to_hdfs
